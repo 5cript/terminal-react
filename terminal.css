@@ -1,0 +1,21 @@
+.terminalFrame {
+    height: calc(100% - 30px);
+    background: var(--background-color-darker);
+    margin: 8px;
+    width: calc(100% - 30px);
+    border: 1px solid black;
+    padding: 5px;
+    color: var(--foreground-color);
+    overflow: scroll;
+    overflow-x: hidden;
+}
+
+.terminalTextBox {
+    width: 100%;
+}
+
+@keyframes terminalBlink {
+    0%{opacity: 1;}
+    50%{opacity: 0;}
+    100%{opacity: 1;}
+}
