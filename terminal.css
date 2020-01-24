@@ -2,16 +2,37 @@
     height: calc(100% - 30px);
     background: var(--background-color-darker);
     margin: 8px;
-    width: calc(100% - 30px);
+    width: calc(100% - 8px);
     border: 1px solid black;
     padding: 5px;
-    color: var(--foreground-color);
+    color: var(--foreground);
     overflow: scroll;
-    overflow-x: hidden;
 }
 
 .terminalTextBox {
+    user-select: text;
+    width: inherit;
     width: 100%;
+}
+
+.terminalPs1 {
+    color: var(--foreground)
+}
+
+.terminalInputContainer {
+    width: inherit;
+    display: flex;
+}
+
+.terminalInput {
+    background: var(--background-color-darker);
+    color: var(--foreground);
+    border: none;
+    width: 100%;
+    outline: none;
+    margin-left: 2px;
+    font-family: 'Consolas';
+    font-size: var(--terminal-font-size);
 }
 
 @keyframes terminalBlink {

@@ -1,9 +1,7 @@
 import React from 'react';
 import _ from 'lodash';
 
-import './styles/terminal.css';
-
-let fs = window.require('fs');
+import './terminal.css';
 
 let helpers = {
     _16color1: ["#000000", "#CD0000", "#00CD00", "#CDCD00", "#0000CD", "#CD00CD", "#00CDCD", "#E5E5E5"],
@@ -220,16 +218,8 @@ class Modifier {
 }
 
 class TerminalText extends React.Component {
-    modifiedSections = []
-
-    cacheData(lines) {
-    }
-
-    clear() {
-        this.modifiedSections = [];
-    }
-
-    parse(data) {
+    parse = (data) => {
+        let sections = [];
         let accum = '';
         let currentMod = new Modifier();
 
@@ -260,11 +250,11 @@ class TerminalText extends React.Component {
             let backtracker = i;
 
             if (data[i] == '\n') {
-                this.modifiedSections.push({
+                sections.push({
                     data: accum,
                     mod: currentMod.clone()
                 })
-                this.modifiedSections.push({
+                sections.push({
                     newline: true
                 })
                 accum = '';
@@ -299,7 +289,7 @@ class TerminalText extends React.Component {
                 let split = data.substr(i, finder).split(';');
 
                 let modus = new Modifier;
-                for (let s = 0; s != split.length; ++s) {
+                for (let s = 0; s < split.length; ++s) {
                     let cur = 0;
                     try {
                         cur = parseInt(split[s]);
@@ -342,15 +332,16 @@ class TerminalText extends React.Component {
                         modus.reverse = false;
                     else if (cur === 28)
                         modus.hidden = false;
-                    else if (cur === 38 && s + 2 < split.length && split[s + 1] === 5) {
+                    else if (cur === 38 && s + 2 < split.length && split[s + 1] === '5') {
                         modus.foreground256 = split[s + 2];
-                    } else if (cur === 48 && s + 2 < split.length && split[s + 1] === 5) {
+                        s+=2;
+                    } else if (cur === 48 && s + 2 < split.length && split[s + 1] === '5') {
                         modus.background256 = split[s + 2];
-                    } else
-                        console.log(split[s])
+                        s+=2;
+                    }
                 }
 
-                this.modifiedSections.push({
+                sections.push({
                     data: accum,
                     mod: currentMod.clone()
                 })
@@ -361,19 +352,16 @@ class TerminalText extends React.Component {
                 accum = '';
             }
         }
-        this.modifiedSections.push({
+        sections.push({
             data: accum,
             mod: currentMod.clone()
         })
-    }
-
-    parseCached(data) {
-        this.parse(data);
+        return sections;
     }
 
     constructor(props) {
         super(props);
-        this.parseCached(props.data);
+        this.onInput = this.props.onInput ? this.props.onInput : ()=>{};
         if (this.props.defaultBackground)
             this.defaultBackground = this.props.defaultBackground;
         else
@@ -384,7 +372,9 @@ class TerminalText extends React.Component {
             this.defaultForeground = 'var(--foreground)';
     }
 
-    renderSections() {
+    renderSections(data) {
+        this.modifiedSections = this.parse(data);
+
         return (
             this.modifiedSections.map((s, i) => {
                 return helpers.toSpan(i, s.mod, s.data, this.defaultForeground, this.defaultBackground);
@@ -394,37 +384,84 @@ class TerminalText extends React.Component {
 
     render() {
         return (
-            <div>{this.renderSections()}</div>
+            <div 
+                className='terminalTextBox'
+                onClick={(e) => {e.stopPropagation();}}
+            >
+                {this.renderSections(this.props.data)}
+            </div>
         )
     }
 }
 
 class Terminal extends React.Component {
-    state = {
-        data: ''
-    }
-
     constructor(props) {
         super(props);
         this.font = props.font;
         if (!this.font)
             this.font = {}
         if (!this.font.size)
-            this.font.size = 11;
+            this.font.size = 'var(--terminal-font-size)';
         if (!this.font.family)
             this.font.family = "Consolas";
 
-        this.state.data = fs.readFileSync('public/example_data.txt', 'utf8');
+        this.onSubmit = (ps1, text) => {
+            if (props.onSubmit)
+                props.onSubmit(ps1, text);
+        }
+    }
+    
+    componentDidMount() {
+        this.input.focus();
     }
 
-    render() {
-        return (
-            <div className='terminalFrame' style={{ fontFamily: this.font.family, fontSize: this.font.size }}>
-                <TerminalText
-                    data={this.state.data}
-                >
+    disabledStyle = () => {
+        return {
+            background: (() => {
+                if (this.props.disabled)
+                    return this.props.disabledColor ? this.props.disabledColor : '#880000';
+                return undefined;
+            })()
+        }
+    }
 
+    focus = () => {
+        this.input.focus();
+    }
+
+    render = () => {
+        return (
+            <div 
+                className='terminalFrame' 
+                style={{ fontFamily: this.font.family, fontSize: this.font.size }}
+                onClick={() => {this.input.focus()}}
+            >
+                <TerminalText
+                    data={this.props.data}
+                    onInput={() => {this.input.focus()}}
+                >
                 </TerminalText>
+                <div className='terminalInputContainer'>
+                    <div 
+                        className='terminalPs1'
+                        style={this.disabledStyle()}
+                    >{(this.props.PS1 ? this.props.PS1 : '>')}</div>
+                    <input 
+                        ref={(input) => { this.input = input; }} 
+                        type='text' 
+                        className='terminalInput'
+                        disabled={this.props.disabled ? this.props.disabled : false}
+                        style={this.disabledStyle()}
+                        onKeyUp={(e) => {
+                            if (e.keyCode === 13 && this.input.value.length > 0) {
+                                let ps1 = (this.props.PS1 ? this.props.PS1 : '>');
+                                this.onSubmit(ps1, this.input.value);
+                                this.input.value = '';
+                            }
+                        }}
+                    >
+                    </input>
+                </div>
             </div>
         )
     }
