@@ -1,7 +1,7 @@
 import React from 'react';
 import _ from 'lodash';
 
-import './terminal.css';
+//import './terminal.css';
 
 let helpers = {
     _16color1: ["#000000", "#CD0000", "#00CD00", "#CDCD00", "#0000CD", "#CD00CD", "#00CDCD", "#E5E5E5"],
@@ -394,6 +394,13 @@ class TerminalText extends React.Component {
     }
 }
 
+/**
+ * props are:
+ *  - font, example: {size: 12, family: 'Consolas'}
+ *  - onSubmit: A function called with (ps1, text)
+ *      example: () => {this.setState({data: this.state.data + ps1 + ' ' + dat + "\n"})}
+ *  -data: The terminal is fully controlled. data is supplied from outside.
+ */
 class Terminal extends React.Component {
     constructor(props) {
         super(props);
