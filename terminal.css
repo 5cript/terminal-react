@@ -9,6 +9,10 @@
     overflow: scroll;
 }
 
+.terminalFrame span {
+    white-space: pre;
+}
+
 .terminalTextBox {
     user-select: text;
     width: inherit;

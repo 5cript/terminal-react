@@ -442,10 +442,11 @@ class Terminal extends React.Component {
                 >
                 </TerminalText>
                 <div className='terminalInputContainer'>
-                    <div 
-                        className='terminalPs1'
-                        style={this.disabledStyle()}
-                    >{(this.props.PS1 ? this.props.PS1 : '>')}</div>
+                    <div className='terminalPs1'>
+                        <TerminalText 
+                            data={this.props.PS1 ? this.props.PS1 : '>'}
+                        />
+                    </div>
                     <input 
                         ref={(input) => { this.input = input; }} 
                         type='text' 
