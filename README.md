@@ -1,5 +1,7 @@
 # terminal-react
 
+(I dont support this project yet.)
+
 # Example Usage
 ```c++
 class TerminalView extends React.Component {
@@ -31,7 +33,7 @@ class TerminalView extends React.Component {
                         }, 1000)
                     }}
                     disabled={this.state.disabled}
-                    PS1='ELA$&nbsp;'
+                    PS1='>$&nbsp;'
                 ></Terminal>
             </div>
         );
