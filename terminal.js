@@ -1,5 +1,4 @@
 import React from 'react';
-import _ from 'lodash';
 
 //import './terminal.css';
 
@@ -217,11 +216,443 @@ class Modifier {
     }
 }
 
-class TerminalText extends React.Component {
-    parse = (data) => {
+class Display {
+    sections = [];
+
+    /// Cursor position within the viewscreen
+    cursor = {x: 0, y: 0};
+
+    /// There might be data off the screen
+    /// The scroll offset is in lines.
+    scrollOffset = 0;
+
+    /// Actual size of the terminal window
+    dimension = {width: 0, height: 0};
+
+    /// Current active modifier for writing with the cursor
+    currentModifierIndex = 0;
+
+    /// The ENTIRE data, including data outside the view.
+    data = {
+        lines: [''],
+        modifierLineIndices: [[]]
+    }
+
+    /// The data modifiers that modify text appearance.
+    modifiers = [new Modifier]
+
+    constructor(dimension) {
+        this.dimension = {
+            x: dimension.x,
+            y: dimension.y
+        }
+    }
+
+    toSections = () => {
+        if (this.data.lines.length === 0)
+            return [];
+
         let sections = [];
+
+        let lastModifier = this.data.modifierLineIndices[0][0];
+        let currentSection = {
+            data: '',
+            modifier: this.modifiers[lastModifier]
+        }
+        let push = (x, y) => {
+            this.sections.push(currentSection);
+            currentSection.data = '';
+            currentSection.modifier = this.modifiers[this.data.modifierLineIndices[y][x]];
+        }
+        for (let y = this.scrollOffset; y != this.data.modifierLineIndices.length; ++y) {
+            for (let x = 0; x != this.data.modifierLineIndices[y].length; ++x) {
+                if (lastModifier != this.data.modifierLineIndices[y][x]) {
+                    push(x, y);
+                }
+                currentSection.data += this.data.lines[y][x];
+            }
+            push(this.data.modifierLineIndices[y].length - 1, y);
+            this.sections.push({newline: true});
+        }
+
+        console.log(sections);
+        return sections;
+    }
+
+    _getLineOffset = () => {
+        return this.scrollOffset + this.cursor.y
+    }
+
+    _extendLines = () => {
+        let y = this._getLineOffset();
+        while (this.data.lines.length <= y) {
+            this.data.lines.push('');
+            this.data.modifierLineIndices.push([]);
+        }
+    }
+
+    _insertIn = (arr, data) => {
+        if (this.cursor.x < arr[this.cursor.y].length - 1)
+            arr[this.cursor.y] = [arr[this.cursor.y].slice(0, this.cursor.x), data, arr[this.cursor.y].slice(this.cursor.x)].join('');
+        else if (this.cursor.x === 0)
+            arr[this.cursor.y] = data + arr[this.cursor.y];
+        else
+            arr[this.cursor.y] += data;
+
+    }
+
+    _insertInLine = (data) => {
+        this._insertIn(this.data.lines, data);
+    }
+
+    _insertInModifier = () => {
+        this._insertIn(this.data.modifierLineIndices, this.currentModifierIndex);
+    }
+
+    _insert = (data) => {
+        this._insertInLine(data);
+        this._insertInModifier();
+    }
+
+    /**
+     * Move cursor relative to its current position.
+     */
+    moveCursor = (xyParam) => {
+        if (!xyParam)
+            return;
+        if (xyParam.x) {
+            this.cursor.x = Math.min(this.cursor.x + xyParam.x, this.dimension.width);
+        }
+        if (xyParam.y) {
+            this.cursor.y = Math.min(this.cursor.y + xyParam.y, this.dimension.height);
+        }
+        this._extendLines();
+    }
+
+    /**
+     * Set cursor to supplied parameters
+     */
+    setCursor = (xyParam) => {
+        if (!xyParam)
+            return;
+        if (xyParam.x) {
+            this.cursor.x = Math.min(xyParam.x, this.dimension.width);
+        }
+        if (xyParam.y) {
+            this.cursor.y = Math.min(xyParam.y, this.dimension.height);
+        }
+        this._extendLines();
+    }
+
+    putChar = (c) => {
+        if (c === '\n') {
+            this.moveCursor({y: 1});
+            this.setCursor({x: 0});
+            return;
+        }
+
+        if (this.cursor.x === this.dimension.width - 1) {
+            this.moveCursor({y: 1});
+            this.setCursor({x: 0});
+        }
+
+        this._insert(c);
+    }
+
+    changeModifier = (modifier) => {
+        this.modifiers.push(modifier.clone());
+        this.currentModifierIndex = this.modifiers.length;
+    }
+
+    addSection = (data, modifier) => {
+        this.sections.push({
+            data: data,
+            mod: modifier.clone()
+        })
+    }
+
+    addLineBreak = () => {
+        this.sections.push({
+            newline: true
+        })
+    }
+}
+
+class TerminalData extends React.Component {
+    analyzeEscapeSequence = (data, offset) => {
+        let checkBounds = (j) => {
+            return offset + j < data.length;
+        } 
+
+        if (!checkBounds(0))
+            return {i: offset};
+        
+        // Set codeset
+        if (data[offset] === '(') {
+            if (!checkBounds(1))
+                return {i: offset};
+            
+            //ctx.codeSet = data[offset + 1];
+            return {i: offset + 2};
+        }
+        if (data[offset] === ')') {
+            if (!checkBounds(1))
+                return {i: offset};
+            
+            //ctx.codeSet = data[offset + 1];
+            return {i: offset + 2};
+        }
+        if (data[offset] === '[') {
+            // CSI
+            if (!checkBounds(1))
+                return {i: offset};
+
+            let hasQuestionmark = data[offset + 1] === '?';
+
+            let numberList = [];
+            let num = 0;
+            let accumNum = 0;
+
+            let pushNum = () => {
+                var y = 0;
+                for(; num; num = Math.floor(num / 10)) {
+                    y *= 10;
+                    y += num % 10;
+                }
+                num = y;
+
+                numberList.push(num);
+                accumNum = 0;
+                num = 0;
+            }
+
+            for (let i = offset + 1 + (hasQuestionmark ? 1 : 0); i != data.length; ++i) {
+                let code = data.charCodeAt(i);
+                if (code >= '0'.charCodeAt(0) && code <= '9'.charCodeAt(0)) {
+                    num += (code - '0'.charCodeAt(0)) * Math.pow(10, accumNum);
+                    ++accumNum;                    
+                }
+                else if (code === ';'.charCodeAt(0)) {
+                    pushNum();
+                } else {
+                    pushNum();
+                    return {
+                        i: i + 1,
+                        csi: {
+                            numberList: numberList,
+                            hasQuestionmark: hasQuestionmark,
+                            mode: data[i]
+                        }
+                    }
+                }
+            }
+        }
+
+        return {i: offset}
+    }
+
+    parse = (data, displayDimensions) => {
         let accum = '';
+        let display = new Display(displayDimensions);
         let currentMod = new Modifier();
+
+        let applyCsi = (csi) => {
+            const reducer = (accumulator, currentValue) => accumulator + currentValue;
+
+            switch (csi.mode)
+            {
+                case 'm': {
+                    let modus = new Modifier;
+                    let split = csi.numberList;
+                    for (let s = 0; s < split.length; ++s) {
+                        let cur = 0;
+                        try {
+                            cur = split[s];
+                        }
+                        catch (e) {
+                            continue;
+                        }
+                        if (cur === 0) {
+                            modus = new Modifier;
+                        }
+                        else if (helpers.isForeground(cur)) {
+                            modus.foreground = cur;
+                        }
+                        else if (helpers.isBackground(cur)) {
+                            modus.background = cur;
+                        }
+                        else if (cur === 1) {
+                            modus.bold = true;
+                        }
+                        else if (cur === 2)
+                            modus.dim = true;
+                        else if (cur === 4)
+                            modus.underlined = true;
+                        else if (cur === 5)
+                            modus.blink = true;
+                        else if (cur === 7)
+                            modus.reverse = true;
+                        else if (cur === 8)
+                            modus.hidden = true;
+                        else if (cur === 21)
+                            modus.bold = false;
+                        else if (cur === 22)
+                            modus.dim = false;
+                        else if (cur === 24)
+                            modus.underlined = false;
+                        else if (cur === 25)
+                            modus.blink = false;
+                        else if (cur === 27)
+                            modus.reverse = false;
+                        else if (cur === 28)
+                            modus.hidden = false;
+                        else if (cur === 38 && s + 2 < split.length && split[s + 1] === 5) {
+                            modus.foreground256 = split[s + 2];
+                            s+=2;
+                        } else if (cur === 48 && s + 2 < split.length && split[s + 1] === 5) {
+                            modus.background256 = split[s + 2];
+                            s+=2;
+                        }
+                    }
+
+                    display.addSection(accum, currentMod);
+                    currentMod = modus;
+                    accum = '';
+                    break;
+                } 
+                case '@': {
+                    let redu = csi.numberList.reduce(reducer);
+                    accum += ' '.repeat(redu);
+                    break;
+                }
+                case 'A': {
+                    // TODO Box checking
+                    let redu = csi.numberList.reduce(reducer);
+                    display.moveCursor({y: -redu});
+                    break;
+                }
+                case 'B': {
+                    // TODO Box checking
+                    let redu = csi.numberList.reduce(reducer);
+                    display.moveCursor({y: redu});
+                    break;
+                }
+                case 'C': {
+                    // TODO Box checking
+                    let redu = csi.numberList.reduce(reducer);
+                    display.moveCursor({x: redu});
+                    break;
+                }
+                case 'D': {
+                    // TODO Box checking
+                    let redu = csi.numberList.reduce(reducer);
+                    display.moveCursor({x: -redu});
+                    break;
+                }
+                case 'E': {
+                    // TODO Box checking
+                    let redu = csi.numberList.reduce(reducer);
+                    display.moveCursor({y: redu});
+                    display.setCursor({x: 0});
+                    break;
+                }
+                case 'F': {
+                    // TODO Box checking
+                    let redu = csi.numberList.reduce(reducer);
+                    display.moveCursor({y: -redu});
+                    display.setCursor({x: 0});
+                    break;
+                }
+                case 'G': {
+                    // TODO Box checking
+                    let redu = csi.numberList.reduce(reducer);
+                    display.setCursor({x: redu});
+                    break;
+                }
+                case 'H': {
+                    // TODO Box checking
+                    if (csi.numberList.length != 2)
+                        break;
+                    display.setCursor({x: csi.numberList[1], y: csi.numberList[0]});
+                    break;
+                }
+                case 'J': {
+                    // TODO !
+                    //let redu = csi.numberList.reduce(reducer);
+                    // if 0 -> erase from curosr to end of display
+                    // if 1 -> erase from start to cursor
+                    // if 2 -> erase all visible
+                    // if 3 -> erase all including scrollback buffer
+                    break;
+                }
+                case 'K': {
+                    // TODO!
+                    //let redu = csi.numberList.reduce(reducer);
+                    // if 0 -> erase from cursor to end of line
+                    // if 1 -> erase line from start to cursor
+                    // if 2 -> erase whole line
+                    break;
+                }
+                case 'L': {
+                    // TODO 
+                    // insert number of blank lines
+                    break;
+                }
+                case 'M': {
+                    // TODO 
+                    // delete indicated number of lines
+                    break;
+                }
+                case 'P': {
+                    // TODO
+                    // delete the indicated number of characters on the line
+                    break;
+                }
+                case 'X': {
+                    // TODO
+                    // erase the indicated number of characters on the line
+                    // difference to P ????
+                    break;
+                }
+                case 'a': {
+                    // Move cursor right the indicated # of columns.
+                }
+                case 'c': {
+                    // Answer ESC [ ? 6 c: "I am a VT102".
+                }
+                case 'd': {
+                    // d   VPA       Move cursor to the indicated row, current column.
+                }
+                case 'e': {
+                    // e   VPR       Move cursor down the indicated # of rows.
+                }
+                case 'f': {
+                    // f   HVP       Move cursor to the indicated row, column.
+                }
+                case 'g': {
+                    /*
+                    g   TBC       Without parameter: clear tab stop at current position.
+                     ESC [ 3 g: delete all tab stops.
+                    */
+                }
+                // h, l, n - ignore for now
+                // q for keyboard leds, ignore for now
+                case  'r': {
+                    // set scrolling region, parameters are top and bottom row
+                }
+                case 's': {
+                    // save cursor location
+                }
+                case 'u': {
+                    // restore cursor location
+                }
+                case '`': {
+                    // TODO move cursor to indicated column in current row
+                }
+                default:
+                    break;
+            }
+        }
 
         let lookahead = (i, what) => {
             return () => {
@@ -250,113 +681,32 @@ class TerminalText extends React.Component {
             let backtracker = i;
 
             if (data[i] == '\n') {
-                sections.push({
-                    data: accum,
-                    mod: currentMod.clone()
-                })
-                sections.push({
-                    newline: true
-                })
+                display.addSection(accum, currentMod);
                 accum = '';
+                display.addLineBreak();
                 continue;
             }
 
             if (data.charCodeAt(i) !== 0x1B) {
                 accum += data[i];
             } else {
-                // no open bracket?
-                if (i + 1 >= data.length) {
-                    accum += data[i];
+                // other control sequences
+                let res = this.analyzeEscapeSequence(data, i+1, display.cursor);
+
+                if (res.csi) {
+                    applyCsi(res.csi);
+                }
+
+                // there was an understood sequence, can continue parse
+                if (res.i !== i) {
+                    i = res.i - 1;
                     continue;
                 }
-
-                if (data[i + 1] !== '[') {
-                    accum += data[i];
-                    continue;
-                }
-                i += 2;
-
-                // find m or ;
-                let finder = 0;
-                for (; i + finder < data.length && data[i + finder] !== 'm'; ++finder) {
-                }
-                if (i + finder === data.length) {
-                    accum += '\\';
-                    i = backtracker;
-                    continue;
-                }
-
-                let split = data.substr(i, finder).split(';');
-
-                let modus = new Modifier;
-                for (let s = 0; s < split.length; ++s) {
-                    let cur = 0;
-                    try {
-                        cur = parseInt(split[s]);
-                    }
-                    catch (e) {
-                        continue;
-                    }
-
-                    if (cur === 0) {
-                        modus = new Modifier;
-                    }
-                    else if (helpers.isForeground(cur)) {
-                        modus.foreground = cur;
-                    }
-                    else if (helpers.isBackground(cur)) {
-                        modus.background = cur;
-                    }
-                    else if (cur === 1) {
-                        modus.bold = true;
-                    }
-                    else if (cur === 2)
-                        modus.dim = true;
-                    else if (cur === 4)
-                        modus.underlined = true;
-                    else if (cur === 5)
-                        modus.blink = true;
-                    else if (cur === 7)
-                        modus.reverse = true;
-                    else if (cur === 8)
-                        modus.hidden = true;
-                    else if (cur === 21)
-                        modus.bold = false;
-                    else if (cur === 22)
-                        modus.dim = false;
-                    else if (cur === 24)
-                        modus.underlined = false;
-                    else if (cur === 25)
-                        modus.blink = false;
-                    else if (cur === 27)
-                        modus.reverse = false;
-                    else if (cur === 28)
-                        modus.hidden = false;
-                    else if (cur === 38 && s + 2 < split.length && split[s + 1] === '5') {
-                        modus.foreground256 = split[s + 2];
-                        s+=2;
-                    } else if (cur === 48 && s + 2 < split.length && split[s + 1] === '5') {
-                        modus.background256 = split[s + 2];
-                        s+=2;
-                    }
-                }
-
-                sections.push({
-                    data: accum,
-                    mod: currentMod.clone()
-                })
-
-                i += finder;
-
-                currentMod = modus;
-                accum = '';
             }
+            display.putChar(data[i]);
         }
-        sections.push({
-            data: accum,
-            mod: currentMod.clone()
-        })
-        return sections;
+        display.addSection(accum, currentMod);
+        return display;
     }
 
     constructor(props) {
@@ -365,18 +715,25 @@ class TerminalText extends React.Component {
         if (this.props.defaultBackground)
             this.defaultBackground = this.props.defaultBackground;
         else
-            this.defaultBackground = 'var(--background-color-darker)';
+            this.defaultBackground = 'var(--terminal-default-background)';
         if (this.props.defaultForeground)
             this.defaultForeground = this.props.defaultForeground;
         else
-            this.defaultForeground = 'var(--foreground)';
+            this.defaultForeground = 'var(--terminal-default-foreground)';
     }
 
-    renderSections(data) {
-        this.modifiedSections = this.parse(data);
+    renderDisplay(data, displayDimensions) {
+        this.display = this.parse(data, displayDimensions);
 
+        /*
         return (
-            this.modifiedSections.map((s, i) => {
+            this.display.sections.map((s, i) => {
+                return helpers.toSpan(i, s.mod, s.data, this.defaultForeground, this.defaultBackground);
+            })
+        )
+        */
+        return (
+            this.display.toSections().map((s, i) => {
                 return helpers.toSpan(i, s.mod, s.data, this.defaultForeground, this.defaultBackground);
             })
         )
@@ -388,7 +745,7 @@ class TerminalText extends React.Component {
                 className='terminalTextBox'
                 onClick={(e) => {e.stopPropagation();}}
             >
-                {this.renderSections(this.props.data)}
+                {this.renderDisplay(this.props.data, this.props.displayDimensions)}
             </div>
         )
     }
@@ -411,10 +768,40 @@ class Terminal extends React.Component {
             this.font.size = 'var(--terminal-font-size)';
         if (!this.font.family)
             this.font.family = "Consolas";
+        if (props.historyMax)
+            this.historyMax = 500;
+
+        if (this.props.bounds)
+            this.bounds = this.props.bounds;
+        else {
+            this.bounds = {
+                height: props.size.height ? (props.size.height / this.font.size) : (120), 
+                width: props.size.width / (this.font.size * 2 / 3)
+            };
+        }
+
+        this.history = [];
+        this.historyOffset = 0;
+        this.perservedCurrent = '';
 
         this.onSubmit = (ps1, text) => {
+            this.history.push(text);
+            if (this.history.length > this.historyMax)
+                this.history.shift();
+
             if (props.onSubmit)
-                props.onSubmit(ps1, text);
+           
+            props.onSubmit(ps1, text);
+        }
+
+        this.onKeyDown = (e) => {
+            if (props.onKeyDown)
+                props.onKeyDown(e);
+        }
+
+        this.onTab = (text) => {
+            if (props.onTab)
+                props.onTab(text);
         }
     }
     
@@ -422,18 +809,79 @@ class Terminal extends React.Component {
         this.input.focus();
     }
 
-    disabledStyle = () => {
+    style = () => {
         return {
             background: (() => {
-                if (this.props.disabled)
+                if (this.props.disabled || this.props.indicator)
                     return this.props.disabledColor ? this.props.disabledColor : '#880000';
                 return undefined;
             })()
         }
     }
 
+    commandline = () => {
+        return this.input.value;
+    }
+
+    setCommandline = (text) => {
+        this.input.value = text;
+    }
+
     focus = () => {
         this.input.focus();
+    }
+
+    historyUp = () => {
+        if (this.history.length - this.historyOffset <= 0)
+            return;
+            
+        if (this.historyOffset === 0 && this.input.value.length > 0)
+            this.perservedCurrent = this.input.value;
+
+        this.input.value = this.history[this.history.length - this.historyOffset - 1];
+        ++this.historyOffset;
+    }
+
+    historyDown = () => {
+        if (this.historyOffset === 0) {
+            this.input.value = this.perservedCurrent;
+            return;
+        }
+
+        --this.historyOffset;
+        this.input.value = this.history[this.history.length - this.historyOffset - 1];
+    }
+
+    ctrl_C = () => {
+        if (this.historyOffset !== 0) {
+            this.historyOffset = 0;
+        }
+        if (this.input.value.length > 0)
+            this.input.value = '';
+    }
+
+    keyDownBasics = (e) => {
+        if (e.keyCode === 9) {   
+            e.preventDefault();
+            return;
+        }
+        if (e.keyCode === 38) {
+            // up arrow
+            this.historyUp();
+            e.preventDefault();
+            return;
+        }
+        if (e.keyCode === 40) {
+            // down arrow
+            this.historyDown();
+            e.preventDefault();
+            return;
+        }
+        if (e.keyCode === 67 && e.ctrlKey) {
+            console.log('abort');
+            this.ctrl_C();
+            return;
+        }
     }
 
     render = () => {
@@ -443,15 +891,17 @@ class Terminal extends React.Component {
                 style={{ fontFamily: this.font.family, fontSize: this.font.size }}
                 onClick={() => {this.input.focus()}}
             >
-                <TerminalText
+                <TerminalData
                     data={this.props.data}
                     onInput={() => {this.input.focus()}}
+                    displayDimensions={this.bounds}
                 >
-                </TerminalText>
+                </TerminalData>
                 <div className='terminalInputContainer'>
                     <div className='terminalPs1'>
-                        <TerminalText 
+                        <TerminalData 
                             data={this.props.PS1 ? this.props.PS1 : '>'}
+                            displayDimensions={{width: (this.props.PS1 ? this.props.PS1 : '>').length, height: 1}}
                         />
                     </div>
                     <input 
@@ -459,12 +909,18 @@ class Terminal extends React.Component {
                         type='text' 
                         className='terminalInput'
                         disabled={this.props.disabled ? this.props.disabled : false}
-                        style={this.disabledStyle()}
+                        style={this.style()}
+                        onKeyDown={(e) => {
+                            this.keyDownBasics(e);
+                            this.onKeyDown(e);
+                        }}
                         onKeyUp={(e) => {
                             if (e.keyCode === 13 && this.input.value.length > 0) {
                                 let ps1 = (this.props.PS1 ? this.props.PS1 : '>');
                                 this.onSubmit(ps1, this.input.value);
                                 this.input.value = '';
+                            } else if (e.keyCode === 9) {
+                                this.onTab(this.input.value);
                             }
                         }}
                     >

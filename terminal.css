@@ -1,11 +1,10 @@
 .terminalFrame {
     height: calc(100% - 30px);
-    background: var(--background-color-darker);
     margin: 8px;
     width: calc(100% - 8px);
     border: 1px solid black;
     padding: 5px;
-    color: var(--foreground);
+    color: var(--terminal-default-foreground);
     overflow: scroll;
 }
 
@@ -20,7 +19,7 @@
 }
 
 .terminalPs1 {
-    color: var(--foreground)
+    color: var(--terminal-default-foreground);
 }
 
 .terminalInputContainer {
@@ -29,8 +28,7 @@
 }
 
 .terminalInput {
-    background: var(--background-color-darker);
-    color: var(--foreground);
+    color: var(--terminal-default-foreground);
     border: none;
     width: 100%;
     outline: none;
