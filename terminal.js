@@ -201,18 +201,18 @@ class Modifier {
     background256 = -1;
 
     clone() {
-        return {
-            bold: this.bold,
-            underlined: this.underlined,
-            reverse: this.reverse,
-            hidden: this.hidden,
-            dim: this.dim,
-            blink: this.blink,
-            foreground: this.foreground,
-            background: this.background,
-            foreground256: this.foreground256,
-            background256: this.background256
-        }
+        let mod = new Modifier;
+        mod.bold = this.bold;
+        mod.underlined = this.underlined;
+        mod.reverse = this.reverse;
+        mod.hidden = this.hidden;
+        mod.dim = this.dim;
+        mod.blink = this.blink;
+        mod.foreground = this.foreground;
+        mod.background = this.background;
+        mod.foreground256 = this.foreground256;
+        mod.background256 = this.background256;
+        return mod;
     }
 }
 
@@ -254,15 +254,19 @@ class Display {
 
         let sections = [];
 
-        let lastModifier = this.data.modifierLineIndices[0][0];
+        let lastModifier = 0;
         let currentSection = {
             data: '',
             modifier: this.modifiers[lastModifier]
         }
         let push = (x, y) => {
-            this.sections.push(currentSection);
+            sections.push({
+                data: currentSection.data,
+                modifier: currentSection.modifier.clone()
+            });
             currentSection.data = '';
             currentSection.modifier = this.modifiers[this.data.modifierLineIndices[y][x]];
+            lastModifier = this.data.modifierLineIndices[y][x];
         }
         for (let y = this.scrollOffset; y != this.data.modifierLineIndices.length; ++y) {
             for (let x = 0; x != this.data.modifierLineIndices[y].length; ++x) {
@@ -272,10 +276,9 @@ class Display {
                 currentSection.data += this.data.lines[y][x];
             }
             push(this.data.modifierLineIndices[y].length - 1, y);
-            this.sections.push({newline: true});
+            if (y + 1 != this.data.modifierLineIndices.length)
+                sections.push({newline: true});
         }
-
-        console.log(sections);
         return sections;
     }
 
@@ -298,7 +301,6 @@ class Display {
             arr[this.cursor.y] = data + arr[this.cursor.y];
         else
             arr[this.cursor.y] += data;
-
     }
 
     _insertInLine = (data) => {
@@ -321,10 +323,19 @@ class Display {
         if (!xyParam)
             return;
         if (xyParam.x) {
-            this.cursor.x = Math.min(this.cursor.x + xyParam.x, this.dimension.width);
+            this.cursor.x = this.cursor.x + xyParam.x;
+            if (this.cursor.x >= this.dimension.width) {
+                let over = (this.cursor.x - this.dimension.width);
+                this.moveCursor({y: (over / this.dimension.width) + 1});
+                this.cursor.x = this.cursor.x % this.dimension.width;
+            }
         }
         if (xyParam.y) {
-            this.cursor.y = Math.min(this.cursor.y + xyParam.y, this.dimension.height);
+            this.cursor.y = this.cursor.y + xyParam.y;
+            if (this.cursor.y >= this.dimension.height) {
+                this.scrollOffset += (this.dimension.height - this.cursor.y + 1);
+                this.cursor.y = this.dimension.height - 1;
+            }
         }
         this._extendLines();
     }
@@ -357,11 +368,12 @@ class Display {
         }
 
         this._insert(c);
+        this.moveCursor({x: 1});
     }
 
     changeModifier = (modifier) => {
         this.modifiers.push(modifier.clone());
-        this.currentModifierIndex = this.modifiers.length;
+        this.currentModifierIndex = this.modifiers.length - 1;
     }
 
     addSection = (data, modifier) => {
@@ -516,6 +528,7 @@ class TerminalData extends React.Component {
                     }
 
                     display.addSection(accum, currentMod);
+                    display.changeModifier(modus);
                     currentMod = modus;
                     accum = '';
                     break;
@@ -684,6 +697,7 @@ class TerminalData extends React.Component {
                 display.addSection(accum, currentMod);
                 accum = '';
                 display.addLineBreak();
+                display.putChar(data[i]);
                 continue;
             }
 
@@ -734,7 +748,7 @@ class TerminalData extends React.Component {
         */
         return (
             this.display.toSections().map((s, i) => {
-                return helpers.toSpan(i, s.mod, s.data, this.defaultForeground, this.defaultBackground);
+                return helpers.toSpan(i, s.modifier, s.data, this.defaultForeground, this.defaultBackground);
             })
         )
     }
