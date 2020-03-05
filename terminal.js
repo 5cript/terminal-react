@@ -43,7 +43,7 @@ let helpers = {
             "#bcbcbc", "#c6c6c6", "#d0d0d0", "#dadada", "#e4e4e4", "#eeeeee"][num];
     },
     foregroundTo16Color: (num, def) => {
-        if (num == 39)
+        if (num === 39)
             return def;
 
         if (num >= 30 && num <= 37)
@@ -55,7 +55,7 @@ let helpers = {
         return def;
     },
     backgroundTo16Color: (num, def) => {
-        if (num == 49)
+        if (num === 49)
             return def;
 
         if (num >= 40 && num <= 47)
@@ -125,7 +125,8 @@ let helpers = {
                     background: 'transparent',
                     fontWeight: mod.bold ? 'bold' : undefined,
                     textDecoration: mod.underlined ? 'underline' : undefined,
-                    animation: mod.blink ? 'terminalBlink 1s infinite' : undefined
+                    animation: mod.blink ? 'terminalBlink 1s infinite' : undefined,
+                    whiteSpace: 'pre'
                 }}>{(() => {
                     if (!mod.hidden)
                         return data;
@@ -141,7 +142,7 @@ let helpers = {
         var max = Math.max(r, g, b), min = Math.min(r, g, b);
         var h, s, l = (max + min) / 2;
 
-        if (max == min) {
+        if (max === min) {
             h = s = 0; // achromatic
         } else {
             var d = max - min;
@@ -150,6 +151,7 @@ let helpers = {
                 case r: h = (g - b) / d + (g < b ? 6 : 0); break;
                 case g: h = (b - r) / d + 2; break;
                 case b: h = (r - g) / d + 4; break;
+                default: break;
             }
             h /= 6;
         }
@@ -161,7 +163,7 @@ let helpers = {
         let g;
         let b;
 
-        if (s == 0) {
+        if (s === 0) {
             r = g = b = l; // achromatic
         } else {
             var hue2rgb = function hue2rgb(p, q, t) {
@@ -201,7 +203,7 @@ class Modifier {
     background256 = -1;
 
     clone() {
-        let mod = new Modifier;
+        let mod = new Modifier();
         mod.bold = this.bold;
         mod.underlined = this.underlined;
         mod.reverse = this.reverse;
@@ -217,8 +219,6 @@ class Modifier {
 }
 
 class Display {
-    sections = [];
-
     /// Cursor position within the viewscreen
     cursor = {x: 0, y: 0};
 
@@ -227,10 +227,13 @@ class Display {
     scrollOffset = 0;
 
     /// Actual size of the terminal window
-    dimension = {width: 0, height: 0};
+    dimension = {width: 1, height: 1};
 
     /// Current active modifier for writing with the cursor
     currentModifierIndex = 0;
+
+    // Saved cursor
+    cursorStore = {x: 0, y: 0};
 
     /// The ENTIRE data, including data outside the view.
     data = {
@@ -238,14 +241,20 @@ class Display {
         modifierLineIndices: [[]]
     }
 
+    mode = 0;
+
     /// The data modifiers that modify text appearance.
-    modifiers = [new Modifier]
+    modifiers = [new Modifier()]
 
     constructor(dimension) {
         this.dimension = {
-            x: dimension.x,
-            y: dimension.y
+            width: dimension.width + 1,
+            height: dimension.height + 1
         }
+    }
+
+    warn = (msg, moreInfo) => {
+        console.error(msg, moreInfo)
     }
 
     toSections = () => {
@@ -260,6 +269,9 @@ class Display {
             modifier: this.modifiers[lastModifier]
         }
         let push = (x, y) => {
+            if (currentSection.modifier === undefined)
+                return;    
+
             sections.push({
                 data: currentSection.data,
                 modifier: currentSection.modifier.clone()
@@ -268,15 +280,16 @@ class Display {
             currentSection.modifier = this.modifiers[this.data.modifierLineIndices[y][x]];
             lastModifier = this.data.modifierLineIndices[y][x];
         }
-        for (let y = this.scrollOffset; y != this.data.modifierLineIndices.length; ++y) {
-            for (let x = 0; x != this.data.modifierLineIndices[y].length; ++x) {
-                if (lastModifier != this.data.modifierLineIndices[y][x]) {
+        for (let y = this.scrollOffset; y < this.data.modifierLineIndices.length; ++y) {
+            for (let x = 0; x !== this.data.modifierLineIndices[y].length; ++x) {
+                if (lastModifier !== this.data.modifierLineIndices[y][x]) {
                     push(x, y);
                 }
                 currentSection.data += this.data.lines[y][x];
             }
-            push(this.data.modifierLineIndices[y].length - 1, y);
-            if (y + 1 != this.data.modifierLineIndices.length)
+            if (this.data.modifierLineIndices[y].length > 0)
+                push(this.data.modifierLineIndices[y].length - 1, y);
+            if (y + 1 !== this.data.modifierLineIndices.length)
                 sections.push({newline: true});
         }
         return sections;
@@ -292,28 +305,53 @@ class Display {
             this.data.lines.push('');
             this.data.modifierLineIndices.push([]);
         }
+
+        for (let i = this.cursor.x - this.data.lines[y].length; i > 0; --i) {
+            this.data.lines[y] += ' ';
+            //this.data.modifierLineIndices[y].push(this.currentModifierIndex);
+            this.data.modifierLineIndices[y].push(0);
+        }
     }
 
-    _insertIn = (arr, data) => {
-        if (this.cursor.x < arr[this.cursor.y].length - 1)
-            arr[this.cursor.y] = [arr[this.cursor.y].slice(0, this.cursor.x), data, arr[this.cursor.y].slice(this.cursor.x)].join('');
+    _insertInArr = (arr, data) => {
+        let y = this.cursor.y + this.scrollOffset;
+        if (this.cursor.x < arr[y].length - 1)
+            arr[y] = arr[y].slice(0, this.cursor.x).concat([data], arr[y].slice(this.cursor.x));
         else if (this.cursor.x === 0)
-            arr[this.cursor.y] = data + arr[this.cursor.y];
+            arr[y].unshift(data);
         else
-            arr[this.cursor.y] += data;
+            arr[y].push(data);
+    }
+
+    _insertInStr = (arr, data) => {
+        let y = this.cursor.y + this.scrollOffset;
+        if (this.cursor.x < arr[y].length - 1)
+            arr[y] = [arr[y].slice(0, this.cursor.x), data, arr[y].slice(this.cursor.x)].join('');
+        else if (this.cursor.x === 0)
+            arr[y] = data + arr[y];
+        else
+            arr[y] += data;
     }
 
     _insertInLine = (data) => {
-        this._insertIn(this.data.lines, data);
+        this._insertInStr(this.data.lines, data);
     }
 
     _insertInModifier = () => {
-        this._insertIn(this.data.modifierLineIndices, this.currentModifierIndex);
+        this._insertInArr(this.data.modifierLineIndices, this.currentModifierIndex);
     }
 
     _insert = (data) => {
         this._insertInLine(data);
         this._insertInModifier();
+    }
+
+    setMode = (mode) => {
+        this.mode += mode;
+    }
+
+    resetMode = (mode) => {
+        this.mode -= mode;
     }
 
     /**
@@ -322,7 +360,7 @@ class Display {
     moveCursor = (xyParam) => {
         if (!xyParam)
             return;
-        if (xyParam.x) {
+        if (xyParam.x !== undefined) {
             this.cursor.x = this.cursor.x + xyParam.x;
             if (this.cursor.x >= this.dimension.width) {
                 let over = (this.cursor.x - this.dimension.width);
@@ -330,7 +368,7 @@ class Display {
                 this.cursor.x = this.cursor.x % this.dimension.width;
             }
         }
-        if (xyParam.y) {
+        if (xyParam.y !== undefined) {
             this.cursor.y = this.cursor.y + xyParam.y;
             if (this.cursor.y >= this.dimension.height) {
                 this.scrollOffset += (this.dimension.height - this.cursor.y + 1);
@@ -346,10 +384,10 @@ class Display {
     setCursor = (xyParam) => {
         if (!xyParam)
             return;
-        if (xyParam.x) {
+        if (xyParam.x !== undefined) {
             this.cursor.x = Math.min(xyParam.x, this.dimension.width);
         }
-        if (xyParam.y) {
+        if (xyParam.y !== undefined) {
             this.cursor.y = Math.min(xyParam.y, this.dimension.height);
         }
         this._extendLines();
@@ -376,22 +414,127 @@ class Display {
         this.currentModifierIndex = this.modifiers.length - 1;
     }
 
-    addSection = (data, modifier) => {
-        this.sections.push({
-            data: data,
-            mod: modifier.clone()
-        })
+    setKeypadMode = (keypadMode) => {
+        this.keypadMode = keypadMode;
     }
 
-    addLineBreak = () => {
-        this.sections.push({
-            newline: true
-        })
+    _strsplice = (str, index, count, add) => {
+        if (index < 0) {
+            index = str.length + index;
+            if (index < 0) {
+                index = 0;
+            }
+        }
+
+        return str.slice(0, index) + (add || "") + str.slice(index + count);
+    }
+
+    eraseFromTo = (from, to) => {
+        from.y += this.scrollOffset;
+        to.y += this.scrollOffset;
+
+        if (from.x === to.x && from.y === to.y)
+            return;
+
+        if (Math.max(from.y, to.y) >= this.data.modifierLineIndices.length) {
+            this.warn('tried to erase outside of terminal range', {from, to});
+            return;
+        }
+        if (Math.min(from.y, to.y) < 0) {
+            this.warn('tried to erase outside of terminal range', {from, to});
+            return;
+        }
+
+        let deltaY = to.y - from.y;
+        if (deltaY === 0) {
+            let x1 = Math.min(from.x, to.x);
+            let x2 = Math.max(from.x, to.x);
+
+            if (x1 < 0 || x2 < 0) {
+                this.warn('tried to erase outside of terminal range', {from, to});
+                return;
+            }
+            this.data.modifierLineIndices[from.y].splice(x1, x2-x1);
+            this.data.lines[from.y].splice(x1, x2-x1);
+            return;
+        } 
+
+        if (deltaY > 1) {
+            // remove all lines inbetween.
+            let y = from.y;
+            this.data.modifierLineIndices.splice(y + 1, deltaY - 1);
+            this.data.lines.splice(y + 1, deltaY - 1);
+        }
+
+        // when i end up here, there are 2 lines that need cutting end (first line) and front (last line)
+        let toInFirstLine = this.data.modifierLineIndices[from.y].length - from.x;
+        this.data.modifierLineIndices[from.y].splice(from.x, toInFirstLine);
+        this.data.modifierLineIndices[to.y - deltaY + 1].splice(0, to.x);
+        this.data.lines[from.y] = this._strsplice(this.data.lines[from.y], from.x, toInFirstLine);
+        this.data.lines[to.y - deltaY + 1] = this._strsplice(this.data.lines[to.y - deltaY + 1], 0, to.x);
+    }
+
+    beginCursor = () => {
+        return {
+            x: 0,
+            y: 0
+        }
+    }
+
+    endCursor = () => {
+        let y = this.scrollOffset + this.data.modifierLineIndices.length - 1
+        return {
+            x: this.data.modifierLineIndices[y].length,
+            y: y
+        }
+    }
+
+    clear = (scrollBuffer) => {
+        if (!scrollBuffer)
+            this.eraseFromTo(this.beginCursor(), this.endCursor());
+        else {
+            this.data.modifierLineIndices = [[]];
+            this.data.lines = [''];
+            this.scrollOffset = 0;
+        }
+    }
+
+    storeCursor = () => {
+        this.cursorStore = this.cursor;
+    }
+
+    restoreCursor = () => {
+        this.setCursor(this.cursorStore);
+    }
+
+    // if 0 -> erase from cursor to end of display
+    // if 1 -> erase from start to cursor
+    // if 2 -> erase all visible
+    // if 3 -> erase all including scrollback buffer
+    erase = (mode) => {
+        switch (mode) {
+            default:
+            case 0: {
+                this.eraseFromTo(this.cursor, this.endCursor());
+                break;
+            }
+            case 1: {
+                this.eraseFromTo(this.beginCursor(), this.cursor);
+                break;
+            }
+            case 2: {
+                this.clear(false);
+                break;
+            }
+            case 3: {
+                this.clear(true);
+            }
+        }
     }
 }
 
 class TerminalData extends React.Component {
-    analyzeEscapeSequence = (data, offset) => {
+    analyzeEscapeSequence = (display, data, offset) => {
         let checkBounds = (j) => {
             return offset + j < data.length;
         } 
@@ -414,6 +557,10 @@ class TerminalData extends React.Component {
             //ctx.codeSet = data[offset + 1];
             return {i: offset + 2};
         }
+        if (data[offset] === '=') {
+            display.setKeypadMode(true);
+            return {i: offset + 1};
+        }
         if (data[offset] === '[') {
             // CSI
             if (!checkBounds(1))
@@ -426,6 +573,9 @@ class TerminalData extends React.Component {
             let accumNum = 0;
 
             let pushNum = () => {
+                if (accumNum === 0)
+                    return;
+
                 var y = 0;
                 for(; num; num = Math.floor(num / 10)) {
                     y *= 10;
@@ -438,7 +588,7 @@ class TerminalData extends React.Component {
                 num = 0;
             }
 
-            for (let i = offset + 1 + (hasQuestionmark ? 1 : 0); i != data.length; ++i) {
+            for (let i = offset + 1 + (hasQuestionmark ? 1 : 0); i !== data.length; ++i) {
                 let code = data.charCodeAt(i);
                 if (code >= '0'.charCodeAt(0) && code <= '9'.charCodeAt(0)) {
                     num += (code - '0'.charCodeAt(0)) * Math.pow(10, accumNum);
@@ -464,9 +614,7 @@ class TerminalData extends React.Component {
     }
 
     parse = (data, displayDimensions) => {
-        let accum = '';
         let display = new Display(displayDimensions);
-        let currentMod = new Modifier();
 
         let applyCsi = (csi) => {
             const reducer = (accumulator, currentValue) => accumulator + currentValue;
@@ -474,7 +622,7 @@ class TerminalData extends React.Component {
             switch (csi.mode)
             {
                 case 'm': {
-                    let modus = new Modifier;
+                    let modus = new Modifier();
                     let split = csi.numberList;
                     for (let s = 0; s < split.length; ++s) {
                         let cur = 0;
@@ -485,7 +633,7 @@ class TerminalData extends React.Component {
                             continue;
                         }
                         if (cur === 0) {
-                            modus = new Modifier;
+                            modus = new Modifier();
                         }
                         else if (helpers.isForeground(cur)) {
                             modus.foreground = cur;
@@ -527,80 +675,77 @@ class TerminalData extends React.Component {
                         }
                     }
 
-                    display.addSection(accum, currentMod);
                     display.changeModifier(modus);
-                    currentMod = modus;
-                    accum = '';
                     break;
                 } 
                 case '@': {
-                    let redu = csi.numberList.reduce(reducer);
-                    accum += ' '.repeat(redu);
+                    let redu = csi.numberList.reduce(reducer, 0);
+                    for (let i = 0; i !== redu; ++i)
+                        display.putChar(' ');
                     break;
                 }
                 case 'A': {
                     // TODO Box checking
-                    let redu = csi.numberList.reduce(reducer);
+                    let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({y: -redu});
                     break;
                 }
                 case 'B': {
                     // TODO Box checking
-                    let redu = csi.numberList.reduce(reducer);
+                    let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({y: redu});
                     break;
                 }
                 case 'C': {
                     // TODO Box checking
-                    let redu = csi.numberList.reduce(reducer);
+                    let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({x: redu});
                     break;
                 }
                 case 'D': {
                     // TODO Box checking
-                    let redu = csi.numberList.reduce(reducer);
+                    let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({x: -redu});
                     break;
                 }
                 case 'E': {
                     // TODO Box checking
-                    let redu = csi.numberList.reduce(reducer);
+                    let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({y: redu});
                     display.setCursor({x: 0});
                     break;
                 }
                 case 'F': {
                     // TODO Box checking
-                    let redu = csi.numberList.reduce(reducer);
+                    let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({y: -redu});
                     display.setCursor({x: 0});
                     break;
                 }
                 case 'G': {
                     // TODO Box checking
-                    let redu = csi.numberList.reduce(reducer);
+                    let redu = csi.numberList.reduce(reducer, 0);
                     display.setCursor({x: redu});
                     break;
                 }
                 case 'H': {
-                    // TODO Box checking
-                    if (csi.numberList.length != 2)
-                        break;
-                    display.setCursor({x: csi.numberList[1], y: csi.numberList[0]});
+                    // TODO Box checking                        
+                    let cursor = {
+                        x: csi.numberList[1] ? csi.numberList[1] : 0,
+                        y: csi.numberList[0] ? csi.numberList[0] : 0
+                    }
+                    display.setCursor(cursor);
                     break;
                 }
                 case 'J': {
-                    // TODO !
-                    //let redu = csi.numberList.reduce(reducer);
-                    // if 0 -> erase from curosr to end of display
-                    // if 1 -> erase from start to cursor
-                    // if 2 -> erase all visible
-                    // if 3 -> erase all including scrollback buffer
+                    // erase characters
+                    display.erase(csi.numberList.reduce(reducer, 0));
                     break;
                 }
                 case 'K': {
                     // TODO!
-                    //let redu = csi.numberList.reduce(reducer);
+                    // erases lines
+                    //let redu = csi.numberList.reduce(reducer, 0);
                     // if 0 -> erase from cursor to end of line
                     // if 1 -> erase line from start to cursor
                     // if 2 -> erase whole line
@@ -617,7 +762,7 @@ class TerminalData extends React.Component {
                     break;
                 }
                 case 'P': {
-                    // TODO
+                    // TODO 
                     // delete the indicated number of characters on the line
                     break;
                 }
@@ -629,83 +774,82 @@ class TerminalData extends React.Component {
                 }
                 case 'a': {
                     // Move cursor right the indicated # of columns.
+                    let x = csi.numberList.reduce(reducer, 0);
+                    display.moveCursor({x});
+                    break;
                 }
                 case 'c': {
                     // Answer ESC [ ? 6 c: "I am a VT102".
+                    break;
                 }
                 case 'd': {
                     // d   VPA       Move cursor to the indicated row, current column.
+                    let y = csi.numberList.reduce(reducer, 0);
+                    display.setCursor({y: y});
+                    break;
                 }
                 case 'e': {
                     // e   VPR       Move cursor down the indicated # of rows.
+                    let y = csi.numberList.reduce(reducer, 0);
+                    display.moveCursor({y: y});
+                    break;
                 }
                 case 'f': {
-                    // f   HVP       Move cursor to the indicated row, column.
+                    // f   HVP       Move cursor to the indicated row, column.               
+                    let cursor = {
+                        x: csi.numberList[1] ? csi.numberList[1] : 0,
+                        y: csi.numberList[0] ? csi.numberList[0] : 0
+                    }
+                    display.setCursor(cursor);
+                    break;
                 }
                 case 'g': {
                     /*
                     g   TBC       Without parameter: clear tab stop at current position.
                      ESC [ 3 g: delete all tab stops.
                     */
+                    break;
                 }
-                // h, l, n - ignore for now
                 // q for keyboard leds, ignore for now
                 case  'r': {
                     // set scrolling region, parameters are top and bottom row
+                    display.scrollingRegion = {top: csi.numberList[0], bottom: csi.numberList[1]};
+                    break;
                 }
                 case 's': {
                     // save cursor location
+                    this.storeCursor();
+                    break;
                 }
                 case 'u': {
                     // restore cursor location
+                    this.restoreCursor();
+                    break;
                 }
                 case '`': {
-                    // TODO move cursor to indicated column in current row
+                    // move cursor to indicated column in current row
+                    let x = csi.numberList.reduce(reducer, 0);
+                    this.setCursor({x});
+                    break;
+                }
+                case 'h': {
+                    // Set mode - no supported right now.
+                    display.setMode(csi.numberList[0]);
+                    break;
+                }
+                case 'l': {
+                    display.resetMode(csi.numberList[0]);
                 }
                 default:
                     break;
             }
         }
 
-        let lookahead = (i, what) => {
-            return () => {
-                if (data.length - i < what.length)
-                    return i;
-
-                for (let j = 0; j != what.length; ++j)
-                    if (data.charAt(j + i) !== what.charAt(j))
-                        return i;
-
-                return i + what.length;
-            };
-        };
-        let take = (i, ...args) => {
-            for (let a of [...args]) {
-                let v = a()
-                if (v !== i)
-                    return v;
-            }
-            return i;
-        };
-        let isNum = (c) => {
-            return (c >= '0' && c <= '9');
-        }
-        for (let i = 0; i != data.length; ++i) {
-            let backtracker = i;
-
-            if (data[i] == '\n') {
-                display.addSection(accum, currentMod);
-                accum = '';
-                display.addLineBreak();
-                display.putChar(data[i]);
-                continue;
-            }
-
-            if (data.charCodeAt(i) !== 0x1B) {
-                accum += data[i];
-            } else {
+        for (let i = 0; i !== data.length; ++i) {
+            let code  = data.charCodeAt(i);
+            if (code === 0x1B) {
                 // other control sequences
-                let res = this.analyzeEscapeSequence(data, i+1, display.cursor);
+                let res = this.analyzeEscapeSequence(display, data, i+1, display.cursor);
 
                 if (res.csi) {
                     applyCsi(res.csi);
@@ -716,10 +860,12 @@ class TerminalData extends React.Component {
                     i = res.i - 1;
                     continue;
                 }
+            } else if (code < 32 && code != '\n'.charCodeAt(0)) {
+                // control characters with special purpose
+            } else {
+                display.putChar(data[i]);
             }
-            display.putChar(data[i]);
         }
-        display.addSection(accum, currentMod);
         return display;
     }
 
@@ -784,6 +930,10 @@ class Terminal extends React.Component {
             this.font.family = "Consolas";
         if (props.historyMax)
             this.historyMax = 500;
+        if (props.showLineNumbers === true)
+            this.showLineNumbers = true;
+        else
+            this.showLineNumbers = false;
 
         if (this.props.bounds)
             this.bounds = this.props.bounds;
@@ -898,47 +1048,92 @@ class Terminal extends React.Component {
         }
     }
 
+    onScroll = (e) => {
+        console.log('scroll')
+    }
+
     render = () => {
         return (
-            <div 
-                className='terminalFrame' 
-                style={{ fontFamily: this.font.family, fontSize: this.font.size }}
-                onClick={() => {this.input.focus()}}
-            >
-                <TerminalData
-                    data={this.props.data}
-                    onInput={() => {this.input.focus()}}
-                    displayDimensions={this.bounds}
+            <div className='terminalContainer'>
+                <div 
+                    className='terminalLineNumbers'
+                    style={{ 
+                        fontFamily: this.font.family, 
+                        fontSize: this.font.size, 
+                        visibility: this.showLineNumbers ? 'visible' : 'hidden',
+                        width: this.showLineNumbers ? 30 : 0
+                    }}
                 >
-                </TerminalData>
-                <div className='terminalInputContainer'>
-                    <div className='terminalPs1'>
-                        <TerminalData 
-                            data={this.props.PS1 ? this.props.PS1 : '>'}
-                            displayDimensions={{width: (this.props.PS1 ? this.props.PS1 : '>').length, height: 1}}
-                        />
-                    </div>
-                    <input 
-                        ref={(input) => { this.input = input; }} 
-                        type='text' 
-                        className='terminalInput'
-                        disabled={this.props.disabled ? this.props.disabled : false}
-                        style={this.style()}
-                        onKeyDown={(e) => {
-                            this.keyDownBasics(e);
-                            this.onKeyDown(e);
-                        }}
-                        onKeyUp={(e) => {
-                            if (e.keyCode === 13 && this.input.value.length > 0) {
-                                let ps1 = (this.props.PS1 ? this.props.PS1 : '>');
-                                this.onSubmit(ps1, this.input.value);
-                                this.input.value = '';
-                            } else if (e.keyCode === 9) {
-                                this.onTab(this.input.value);
+                    {(() => {
+                        if (!this.showLineNumbers)
+                            return <></>;
+
+                        let count = 0;
+                        let res = [];
+                        /*
+                        for (let i = 0; i != this.props.data.length; ++i) {
+                            if (this.props.data[i] === '\n') {
+                                ++count;
+                                res.push(count);
                             }
-                        }}
+                        }
+                        */
+                        for (let i = 0; i != this.bounds.height; ++i)
+                            res.push(i + 1);
+
+                        if (res.length === 0)
+                            return <></>;
+
+                        return res.map((elem) => {
+                            return (
+                                <div key={elem}>
+                                    {elem}
+                                </div>
+                            )
+                        });
+                    })()}
+                </div>
+                <div 
+                    className='terminalFrame' 
+                    style={{ fontFamily: this.font.family, fontSize: this.font.size }}
+                    onClick={() => {this.input.focus()}}
+                >
+                    <TerminalData
+                        data={this.props.data}
+                        onInput={() => {this.input.focus()}}
+                        displayDimensions={this.bounds}
+                        onScroll={this.onScroll}
                     >
-                    </input>
+                    </TerminalData>
+                    <div className='terminalInputContainer'>
+                        <div className='terminalPs1'>
+                            <TerminalData 
+                                data={this.props.PS1 ? this.props.PS1 : '>'}
+                                displayDimensions={{width: (this.props.PS1 ? this.props.PS1 : '>').length + 1, height: 1}}
+                            />
+                        </div>
+                        <input 
+                            ref={(input) => { this.input = input; }} 
+                            type='text' 
+                            className='terminalInput'
+                            disabled={this.props.disabled ? this.props.disabled : false}
+                            style={this.style()}
+                            onKeyDown={(e) => {
+                                this.keyDownBasics(e);
+                                this.onKeyDown(e);
+                            }}
+                            onKeyUp={(e) => {
+                                if (e.keyCode === 13 && this.input.value.length > 0) {
+                                    let ps1 = (this.props.PS1 ? this.props.PS1 : '>');
+                                    this.onSubmit(ps1, this.input.value);
+                                    this.input.value = '';
+                                } else if (e.keyCode === 9) {
+                                    this.onTab(this.input.value);
+                                }
+                            }}
+                        >
+                        </input>
+                    </div>
                 </div>
             </div>
         )
