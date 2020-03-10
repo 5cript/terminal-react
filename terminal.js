@@ -66,7 +66,10 @@ let helpers = {
 
         return def;
     },
-    toSpan: (index, mod, data, defaultForeground, defaultBackground) => {
+    toSpan: (index, section, defaultForeground, defaultBackground, keyDown) => {
+        let data = section.data;
+        let mod = section.modifier;
+
         let fg = (def) => {
             let colStr = '';
             if (mod.foreground256 !== -1)
@@ -105,15 +108,34 @@ let helpers = {
         if (mod === undefined || data === undefined)
             return <br key={index}></br>;
 
+        if (section.cursor === true) {
+            return (
+                <input key={index} style={{
+                    backgroundColor: (() => {
+                        if (mod.reverse)
+                            return fg(defaultForeground)
+                        else
+                            return bg(defaultBackground)
+                    })()
+                }}></input>
+            )
+        }
+
         return (
-            <span key={index} style={{
+            <span 
+                key={index} 
+                style={{
                 backgroundColor: (() => {
                     if (mod.reverse)
                         return fg(defaultForeground)
                     else
                         return bg(defaultBackground)
-                })()
-            }}
+                })()}}
+                /*contentEditable={true}*/
+                onKeyDown={(e) => {
+                    keyDown(e);
+                    e.preventDefault();
+                }}
             >
                 <span style={{
                     color: (() => {
@@ -216,6 +238,13 @@ class Modifier {
         mod.background256 = this.background256;
         return mod;
     }
+
+    cursorify() {
+        let mod = this.clone();
+        mod.reverse = true;
+        mod.blink = true;
+        return mod;
+    }
 }
 
 class Display {
@@ -257,7 +286,7 @@ class Display {
         console.error(msg, moreInfo)
     }
 
-    toSections = () => {
+    toSections = (cursorVisible) => {
         if (this.data.lines.length === 0)
             return [];
 
@@ -268,14 +297,20 @@ class Display {
             data: '',
             modifier: this.modifiers[lastModifier]
         }
-        let push = (x, y) => {
+        let push = (x, y, cursor) => {
             if (currentSection.modifier === undefined)
                 return;    
 
-            sections.push({
-                data: currentSection.data,
-                modifier: currentSection.modifier.clone()
-            });
+            if (!cursor)
+                sections.push({
+                    data: currentSection.data,
+                    modifier: currentSection.modifier.clone()
+                });
+            else 
+                sections.push({
+                    data: currentSection.data,
+                    modifier: currentSection.modifier.cursorify()
+                });
             currentSection.data = '';
             currentSection.modifier = this.modifiers[this.data.modifierLineIndices[y][x]];
             lastModifier = this.data.modifierLineIndices[y][x];
@@ -285,7 +320,18 @@ class Display {
                 if (lastModifier !== this.data.modifierLineIndices[y][x]) {
                     push(x, y);
                 }
+                if (cursorVisible && x === this.cursor.x && y === this.cursor.y) {
+                    push(x, y);
+                    currentSection.data += this.data.lines[y][x];
+                    push(x, y, true);
+                }
                 currentSection.data += this.data.lines[y][x];
+            }
+            if (cursorVisible && this.data.modifierLineIndices[y].length === 0 && y === this.cursor.y) {
+                sections.push({
+                    data: ' ',
+                    modifier: currentSection.modifier.cursorify()
+                })
             }
             if (this.data.modifierLineIndices[y].length > 0)
                 push(this.data.modifierLineIndices[y].length - 1, y);
@@ -299,17 +345,30 @@ class Display {
         return this.scrollOffset + this.cursor.y
     }
 
-    _extendLines = () => {
+    /**
+     *  @param options Come from setCursor.
+     */
+    _extendLines = (options) => {
+        if (options === undefined || options === null)
+            options = {};
+
         let y = this._getLineOffset();
         while (this.data.lines.length <= y) {
             this.data.lines.push('');
             this.data.modifierLineIndices.push([]);
         }
 
-        for (let i = this.cursor.x - this.data.lines[y].length; i > 0; --i) {
-            this.data.lines[y] += ' ';
-            //this.data.modifierLineIndices[y].push(this.currentModifierIndex);
-            this.data.modifierLineIndices[y].push(0);
+        if (!options.noExtendX) {
+            for (let i = this.cursor.x - this.data.lines[y].length; i > 0; --i) {
+                this.data.lines[y] += ' ';
+                //this.data.modifierLineIndices[y].push(this.currentModifierIndex);
+                this.data.modifierLineIndices[y].push(0);
+            }
+        } else {
+            if (this.cursor.x >= this.data.lines[y].length)
+                this.cursor.x = this.data.lines[y].length - 1;
+            if (this.cursor.x < 0)
+                this.cursor.x = 0;
         }
     }
 
@@ -357,40 +416,65 @@ class Display {
     /**
      * Move cursor relative to its current position.
      */
-    moveCursor = (xyParam) => {
+    moveCursor = (xyParam, options) => {
         if (!xyParam)
             return;
+
+        if (options === undefined || options === null)
+            options = {}
+
         if (xyParam.x !== undefined) {
             this.cursor.x = this.cursor.x + xyParam.x;
             if (this.cursor.x >= this.dimension.width) {
-                let over = (this.cursor.x - this.dimension.width);
-                this.moveCursor({y: (over / this.dimension.width) + 1});
-                this.cursor.x = this.cursor.x % this.dimension.width;
+                if (options.dontRollOver)
+                    this.cursor.x = this.dimension.width - 1;
+                else {
+                    let over = (this.cursor.x - this.dimension.width);
+                    this.moveCursor({y: (over / this.dimension.width) + 1});
+                    this.cursor.x = this.cursor.x % this.dimension.width;
+                }
             }
         }
         if (xyParam.y !== undefined) {
             this.cursor.y = this.cursor.y + xyParam.y;
             if (this.cursor.y >= this.dimension.height) {
-                this.scrollOffset += (this.dimension.height - this.cursor.y + 1);
-                this.cursor.y = this.dimension.height - 1;
+                if (options.dontRollOver)
+                    this.cursor.y = this.dimension.height - 1;
+                else {
+                    this.scrollOffset += (this.dimension.height - this.cursor.y + 1);
+                    this.cursor.y = this.dimension.height - 1;
+                }
             }
         }
-        this._extendLines();
+        if (this.cursor.x < 0)
+            this.cursor.x = 0;
+        if (this.cursor.y < 0)
+            this.cursor.y = 0;
+        this._extendLines(options);
     }
 
     /**
      * Set cursor to supplied parameters
+     * @param options 
+     *  Possible members:
+     *      - noExtendX: if there is no data in x in the line, dont extend the line, but move to front instead.
      */
-    setCursor = (xyParam) => {
+    setCursor = (xyParam, options) => {
         if (!xyParam)
             return;
+        if (options === null || options === undefined)
+            options = {};
         if (xyParam.x !== undefined) {
             this.cursor.x = Math.min(xyParam.x, this.dimension.width);
         }
         if (xyParam.y !== undefined) {
             this.cursor.y = Math.min(xyParam.y, this.dimension.height);
         }
-        this._extendLines();
+        if (this.cursor.x < 0)
+            this.cursor.x = 0;
+        if (this.cursor.y < 0)
+            this.cursor.y = 0;
+        this._extendLines(options);
     }
 
     putChar = (c) => {
@@ -455,7 +539,7 @@ class Display {
                 return;
             }
             this.data.modifierLineIndices[from.y].splice(x1, x2-x1);
-            this.data.lines[from.y].splice(x1, x2-x1);
+            this.data.lines[from.y] = this._strsplice(this.data.lines[from.y], x1, x2-x1);
             return;
         } 
 
@@ -474,6 +558,9 @@ class Display {
         this.data.lines[to.y - deltaY + 1] = this._strsplice(this.data.lines[to.y - deltaY + 1], 0, to.x);
     }
 
+    /**
+     *  Returns a cursor to the very beginning of data.
+     */
     beginCursor = () => {
         return {
             x: 0,
@@ -481,11 +568,32 @@ class Display {
         }
     }
 
+
+    /**
+     *  Returns a cursor to the very end of data.
+     */
     endCursor = () => {
-        let y = this.scrollOffset + this.data.modifierLineIndices.length - 1
+        let y = this.data.modifierLineIndices.length - 1;
         return {
             x: this.data.modifierLineIndices[y].length,
             y: y
+        }
+    }
+
+    /**
+     *  Returns the end of the line where the cursor is at.
+     */
+    endOfCursorLine = () => {
+        return {
+            x: this.data.lines[this.cursor.y].length,
+            y: this.cursor.y
+        }
+    }
+
+    beginOfCursorLine = () => {
+        return {
+            x: 0,
+            y: this.cursor.y
         }
     }
 
@@ -507,11 +615,14 @@ class Display {
         this.setCursor(this.cursorStore);
     }
 
-    // if 0 -> erase from cursor to end of display
-    // if 1 -> erase from start to cursor
-    // if 2 -> erase all visible
-    // if 3 -> erase all including scrollback buffer
+    /**
+     * Erase in display.
+     */
     erase = (mode) => {
+        // if 0 -> erase from cursor to end of display
+        // if 1 -> erase from start to cursor
+        // if 2 -> erase all visible
+        // if 3 -> erase all including scrollback buffer
         switch (mode) {
             default:
             case 0: {
@@ -528,6 +639,48 @@ class Display {
             }
             case 3: {
                 this.clear(true);
+                break;
+            }
+        }
+    }
+
+    /**
+     * Scroll in display.
+     * @param y if positive scroll down, if negative scroll up. Will hit 0 if scrolling to beginning.
+     */
+    scroll = (y) => {
+        this.scrollOffset += y;
+        if (this.scrollOffset < 0)
+            this.scrollOffset = 0;
+    }
+
+    getCursor = () => {
+        return {
+            x: this.cursor.x,
+            y: this.cursor.y
+        };
+    }
+
+    /**
+     *  Erase in current line.
+     */
+    eraseLine = (mode) => {
+        // if 0 -> erase from cursor to end of line
+        // if 1 -> erase line from start to cursor
+        // if 2 -> erase whole line
+        switch (mode) {
+            default:
+            case 0: {
+                this.eraseFromTo(this.cursor, this.endOfCursorLine());
+                break;
+            }
+            case 1: {
+                this.eraseFromTo(this.beginOfCursorLine(), this.cursor);
+                break;
+            }
+            case 2: {
+                this.eraseFromTo(this.beginOfCursorLine(), this.endOfCursorLine());
+                break;
             }
         }
     }
@@ -574,7 +727,7 @@ class TerminalData extends React.Component {
 
             let pushNum = () => {
                 if (accumNum === 0)
-                    return;
+                    numberList.push(undefined);
 
                 var y = 0;
                 for(; num; num = Math.floor(num / 10)) {
@@ -685,54 +838,46 @@ class TerminalData extends React.Component {
                     break;
                 }
                 case 'A': {
-                    // TODO Box checking
                     let redu = csi.numberList.reduce(reducer, 0);
-                    display.moveCursor({y: -redu});
+                    display.moveCursor({y: -redu}, {dontRollOver: true});
                     break;
                 }
                 case 'B': {
-                    // TODO Box checking
                     let redu = csi.numberList.reduce(reducer, 0);
-                    display.moveCursor({y: redu});
+                    display.moveCursor({y: redu}, {dontRollOver: true});
                     break;
                 }
                 case 'C': {
-                    // TODO Box checking
                     let redu = csi.numberList.reduce(reducer, 0);
-                    display.moveCursor({x: redu});
+                    display.moveCursor({x: redu}, {dontRollOver: true});
                     break;
                 }
                 case 'D': {
-                    // TODO Box checking
                     let redu = csi.numberList.reduce(reducer, 0);
-                    display.moveCursor({x: -redu});
+                    display.moveCursor({x: -redu}, {dontRollOver: true});
                     break;
                 }
                 case 'E': {
-                    // TODO Box checking
                     let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({y: redu});
                     display.setCursor({x: 0});
                     break;
                 }
                 case 'F': {
-                    // TODO Box checking
                     let redu = csi.numberList.reduce(reducer, 0);
                     display.moveCursor({y: -redu});
                     display.setCursor({x: 0});
                     break;
                 }
                 case 'G': {
-                    // TODO Box checking
                     let redu = csi.numberList.reduce(reducer, 0);
-                    display.setCursor({x: redu});
+                    display.setCursor({x: redu - 1});
                     break;
                 }
-                case 'H': {
-                    // TODO Box checking                        
+                case 'H': {                   
                     let cursor = {
-                        x: csi.numberList[1] ? csi.numberList[1] : 0,
-                        y: csi.numberList[0] ? csi.numberList[0] : 0
+                        x: csi.numberList[1] ? (csi.numberList[1] - 1) : 0,
+                        y: csi.numberList[0] ? (csi.numberList[0] - 1) : 0
                     }
                     display.setCursor(cursor);
                     break;
@@ -743,12 +888,21 @@ class TerminalData extends React.Component {
                     break;
                 }
                 case 'K': {
-                    // TODO!
                     // erases lines
-                    //let redu = csi.numberList.reduce(reducer, 0);
-                    // if 0 -> erase from cursor to end of line
-                    // if 1 -> erase line from start to cursor
-                    // if 2 -> erase whole line
+                    let redu = csi.numberList.reduce(reducer, 0);
+                    display.eraseLine(redu);
+                    break;
+                }
+                case 'S': {
+                    // scroll up
+                    let redu = csi.numberList.reduce(reducer, 0);
+                    display.scroll(redu);
+                    break;
+                }
+                case 'T': {
+                    // scroll down
+                    let redu = csi.numberList.reduce(reducer, 0);
+                    display.scroll(-redu);
                     break;
                 }
                 case 'L': {
@@ -785,20 +939,20 @@ class TerminalData extends React.Component {
                 case 'd': {
                     // d   VPA       Move cursor to the indicated row, current column.
                     let y = csi.numberList.reduce(reducer, 0);
-                    display.setCursor({y: y});
+                    display.setCursor({y: y - 1}, {noExtendX: true});
                     break;
                 }
                 case 'e': {
                     // e   VPR       Move cursor down the indicated # of rows.
                     let y = csi.numberList.reduce(reducer, 0);
-                    display.moveCursor({y: y});
+                    display.moveCursor({y: y - 1}, {noExtendX: true});
                     break;
                 }
                 case 'f': {
                     // f   HVP       Move cursor to the indicated row, column.               
                     let cursor = {
-                        x: csi.numberList[1] ? csi.numberList[1] : 0,
-                        y: csi.numberList[0] ? csi.numberList[0] : 0
+                        x: csi.numberList[1] ? (csi.numberList[1] - 1) : 0,
+                        y: csi.numberList[0] ? (csi.numberList[0] - 1) : 0
                     }
                     display.setCursor(cursor);
                     break;
@@ -829,7 +983,7 @@ class TerminalData extends React.Component {
                 case '`': {
                     // move cursor to indicated column in current row
                     let x = csi.numberList.reduce(reducer, 0);
-                    this.setCursor({x});
+                    this.setCursor({x: x - 1});
                     break;
                 }
                 case 'h': {
@@ -884,17 +1038,13 @@ class TerminalData extends React.Component {
 
     renderDisplay(data, displayDimensions) {
         this.display = this.parse(data, displayDimensions);
+        let keyDown = this.props.onKeyDown;
+        if (keyDown === undefined || keyDown === null)
+            keyDown = ()=>{}
 
-        /*
         return (
-            this.display.sections.map((s, i) => {
-                return helpers.toSpan(i, s.mod, s.data, this.defaultForeground, this.defaultBackground);
-            })
-        )
-        */
-        return (
-            this.display.toSections().map((s, i) => {
-                return helpers.toSpan(i, s.modifier, s.data, this.defaultForeground, this.defaultBackground);
+            this.display.toSections(this.props.cursorVisible).map((s, i) => {
+                return helpers.toSpan(i, s, this.defaultForeground, this.defaultBackground, keyDown);
             })
         )
     }
@@ -902,8 +1052,19 @@ class TerminalData extends React.Component {
     render() {
         return (
             <div 
+                tabIndex={this.props.cursorVisible ? "0" : undefined}
                 className='terminalTextBox'
-                onClick={(e) => {e.stopPropagation();}}
+                onClick={(e) => {
+                    console.log('hi');
+                    e.stopPropagation();
+                }}
+                onKeyDown={(e) => {
+                    this.props.onKeyDown(e);
+                    e.stopPropagation();
+                }}
+                style={{
+                    outline: 'none'
+                }}
             >
                 {this.renderDisplay(this.props.data, this.props.displayDimensions)}
             </div>
@@ -976,7 +1137,7 @@ class Terminal extends React.Component {
     style = () => {
         return {
             background: (() => {
-                if (this.props.disabled || this.props.indicator)
+                if (this.props.disabled || this.props.inputOnCursor)
                     return this.props.disabledColor ? this.props.disabledColor : '#880000';
                 return undefined;
             })()
@@ -1096,16 +1257,30 @@ class Terminal extends React.Component {
                 <div 
                     className='terminalFrame' 
                     style={{ fontFamily: this.font.family, fontSize: this.font.size }}
-                    onClick={() => {this.input.focus()}}
+                    contentEditable={false}
                 >
                     <TerminalData
+                        ref={(databox) => {this.terminalText = databox;}}
+                        index={0}
                         data={this.props.data}
                         onInput={() => {this.input.focus()}}
                         displayDimensions={this.bounds}
                         onScroll={this.onScroll}
+                        cursorVisible={this.props.inputOnCursor}
+                        onKeyDown={(e) => {
+                            if (!this.props.inputOnCursor)
+                                return;
+
+                            console.log(e.keyCode);
+
+                            //this.keyDownBasics(e);
+                            //this.onKeyDown(e);
+                        }}
                     >
                     </TerminalData>
-                    <div className='terminalInputContainer'>
+                    <div className='terminalInputContainer' style={{
+                        visibility: this.props.inputOnCursor ? 'hidden' : 'visible'
+                    }}>
                         <div className='terminalPs1'>
                             <TerminalData 
                                 data={this.props.PS1 ? this.props.PS1 : '>'}
