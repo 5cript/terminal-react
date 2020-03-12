@@ -2,6 +2,10 @@ import React from 'react';
 
 //import './terminal.css';
 
+// resources:
+// https://www.xfree86.org/current/ctlseqs.html
+// https://vt100.net/docs/vt510-rm/contents.html
+
 let helpers = {
     _16color1: ["#000000", "#CD0000", "#00CD00", "#CDCD00", "#0000CD", "#CD00CD", "#00CDCD", "#E5E5E5"],
     _16color2: ["#0C0C0C", "#FF0000", "#00FF00", "#FFFF00", "#0000FF", "#FF00FF", "#00FFFF", "#FFFFFF"],
@@ -270,7 +274,7 @@ class Display {
         modifierLineIndices: [[]]
     }
 
-    mode = 0;
+    mode = {};
 
     /// The data modifiers that modify text appearance.
     modifiers = [new Modifier()]
@@ -406,11 +410,22 @@ class Display {
     }
 
     setMode = (mode) => {
-        this.mode += mode;
+        this.mode['' + mode] = 1;
     }
 
     resetMode = (mode) => {
-        this.mode -= mode;
+        this.mode['' + mode] = 0;
+    }
+
+    toggleMode = (mode, initWith = 1) => {
+        if (this.mode['' + mode]) {
+            let i = this.mode['' + mode];
+            if (i === 1)
+                this.mode['' + mode] = 0;
+            else 
+                this.mode['' + mode] = 1;
+        }
+        this.mode['' + mode] = initWith;
     }
 
     /**
@@ -496,10 +511,6 @@ class Display {
     changeModifier = (modifier) => {
         this.modifiers.push(modifier.clone());
         this.currentModifierIndex = this.modifiers.length - 1;
-    }
-
-    setKeypadMode = (keypadMode) => {
-        this.keypadMode = keypadMode;
     }
 
     _strsplice = (str, index, count, add) => {
@@ -711,7 +722,11 @@ class TerminalData extends React.Component {
             return {i: offset + 2};
         }
         if (data[offset] === '=') {
-            display.setKeypadMode(true);
+            display.toggleMode('DECPAM');
+            return {i: offset + 1};
+        }
+        if (data[offset] === '>') {
+            display.toggleMode('DECPNM');
             return {i: offset + 1};
         }
         if (data[offset] === '[') {
@@ -1049,6 +1064,10 @@ class TerminalData extends React.Component {
         )
     }
 
+    getMode() {
+        return this.display.mode;
+    }
+
     render() {
         return (
             <div 
@@ -1142,6 +1161,10 @@ class Terminal extends React.Component {
                 return undefined;
             })()
         }
+    }
+
+    getMode = () => {
+        return this.terminalText.getMode();
     }
 
     commandline = () => {
