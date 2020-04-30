@@ -1,5 +1,7 @@
 import Display from './display'
-import { ControlBits, DECDHL, LineWidth, CountryEncoding } from './mode';
+import { ControlBits, DECDHL, LineWidth, CountryEncoding, CharacterSet, Keypad} from './mode';
+import Modifier from './modifier';
+import Helpers from './helpers';
 import { readSync } from 'fs';
 
 class ParserParts
@@ -9,6 +11,17 @@ class ParserParts
         this.mode = mode;
         this.errorReporter = errorReporter;
         this.warningReporter = warningReporter;
+
+        this.tryParseAnyInOrder = (data, offset) => {
+            return (args) => {
+                for (const parserPart of args) {
+                    let res = parserPart(data, offset);
+                    if (res !== undefined && res.offset !== undefined && res.offset !== offset)
+                        return res;
+                }
+                return {offset: offset};
+            }
+        }
     }
 
     frontIs = (data, offset, what) => {
@@ -121,7 +134,7 @@ class ParserParts
         if (this.mode.bits === ControlBits.S7C1T && data[offset] !== '\x1b')
             return;
 
-        return tryParseAnyInOrder(data, offset)(
+        return this.tryParseAnyInOrder(data, offset)(
             (data, offset)=>{this.controlAlternative(data, offset, '\x1bD', '\x84', 'IND')},
             (data, offset)=>{this.controlAlternative(data, offset, '\x1bE', '\x85', 'NEL')},
             (data, offset)=>{this.controlAlternative(data, offset, '\x1bH', '\x88', 'HTS')},
@@ -212,7 +225,7 @@ class ParserParts
             {
                 return {
                     offset: offset + 3,
-                    action: (parser) => {parser.display.mode.Swiss}
+                    action: (parser) => {return parser.display.mode.Swiss}
                 }
             }
             case '`':
@@ -358,7 +371,7 @@ class ParserParts
         }
 
         if (this.frontIs(data, offset, '\x1b-')) {
-            let res = thisdetermineLanguageCharsetVt300(data, offset);
+            let res = this.determineLanguageCharsetVt300(data, offset);
             return {offset: res.offset, action: (parser) => {
                 res.action(parser);
                 parser.display.mode.charSet = CharacterSet.G1;
@@ -366,7 +379,7 @@ class ParserParts
         }
 
         if (this.frontIs(data, offset, '\x1b.')) {
-            let res = thisdetermineLanguageCharsetVt300(data, offset);
+            let res = this.determineLanguageCharsetVt300(data, offset);
             return {offset: res.offset, action: (parser) => {
                 res.action(parser);
                 parser.display.mode.charSet = CharacterSet.G2;
@@ -374,7 +387,7 @@ class ParserParts
         }
 
         if (this.frontIs(data, offset, '\x1b/')) {
-            let res = thisdetermineLanguageCharsetVt300(data, offset);
+            let res = this.determineLanguageCharsetVt300(data, offset);
             return {offset: res.offset, action: (parser) => {
                 res.action(parser);
                 parser.display.mode.charSet = CharacterSet.G3;
@@ -436,17 +449,6 @@ class ParserParts
             return {offset: offset + 2, action: (parser) => {parser.display.mode.charSet = CharacterSet.G1;}}   
         }
     }
-
-    tryParseAnyInOrder = (data, offset) => {
-        return () => {
-            for (const parserPart of arguments) {
-                let res = parserPart(data, offset);
-                if (res !== undefined && res.offset !== undefined && res.offset !== offset)
-                    return res;
-            }
-            return {offset: offset};
-        }
-    }
 }
 
 class Parser
@@ -463,14 +465,15 @@ class Parser
      */
     parse = (data) => 
     {
-        for (let offset = 0; offset != data.length; ++offset) {
-            let partResult = tryParseAnyInOrder(
-                data, i
-            )(
-                this.parts.tryParseSingleCharacterFunctions,
-                this.parts.tryParseSimpleEscapes,
-                this.parts.tryParseCsi
-            );
+        for (let offset = 0; offset < data.length; ) {
+            let fn = this.parts.tryParseAnyInOrder(
+                data, offset
+            )         
+            let partResult = fn([
+                (d, o) => {return this.parts.tryParseSingleCharacterFunctions(d, o)},
+                (d, o) => {return this.parts.tryParseSimpleEscapes(d, o)},
+                (d, o) => {return this.parts.tryParseCsi(d, o)}
+            ]);
 
             if (partResult.ctrl)
                 this.applySimpleControl(partResult.ctrl);
@@ -657,10 +660,10 @@ class Parser
                     if (cur === 0) {
                         modus = new Modifier();
                     }
-                    else if (helpers.isForeground(cur)) {
+                    else if (Helpers.isForeground(cur)) {
                         modus.foreground = cur;
                     }
-                    else if (helpers.isBackground(cur)) {
+                    else if (Helpers.isBackground(cur)) {
                         modus.background = cur;
                     }
                     else if (cur === 1) {
@@ -868,3 +871,5 @@ class Parser
         }
     }
 }
+
+export default Parser;

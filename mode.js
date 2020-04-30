@@ -121,5 +121,5 @@ class Mode
     }
 };
 
-export {ControlBits, DECCKM, ReportCommands, IRMode, CountryEncoding, CharacterSet, Keypad, Mode};
+export {ControlBits, DECCKM, DECDHL, LineWidth, ReportCommands, IRMode, CountryEncoding, CharacterSet, Keypad, Mode};
 export default Mode;

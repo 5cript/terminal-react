@@ -3,6 +3,7 @@ import React from 'react';
 import Display from './display';
 import helpers from './helpers';
 import Modifier from './modifier';
+import Parser from './parser';
 
 //import './terminal.css';
 
@@ -10,132 +11,57 @@ import Modifier from './modifier';
 // https://www.xfree86.org/current/ctlseqs.html
 // https://vt100.net/docs/vt510-rm/contents.html
 
-class TerminalData extends React.Component {
-    analyzeEscapeSequence = (display, data, offset) => {
-        let checkBounds = (j) => {
-            return offset + j < data.length;
-        } 
+class TerminalData extends React.Component 
+{
+    /**
+     * Creates the display if it doesn't exist.
+     */
+    initialize = (initialData, displayDimensions) => {
+        if (this.display === undefined || this.display === null)
+            this.display = new Display(displayDimensions);
 
-        if (!checkBounds(0))
-            return {i: offset};
-        
-        // Set codeset
-        if (data[offset] === '(') {
-            if (!checkBounds(1))
-                return {i: offset};
-            
-            //ctx.codeSet = data[offset + 1];
-            return {i: offset + 2};
+        if (this.parser === undefined || this.parser === null) {
+            this.parser = new Parser(
+                this.display, 
+                this.warningReporter,
+                this.errorReporter
+            );
+
+            if (initialData !== undefined && initialData !== null)
+                this.parser.parse(initialData);
         }
-        if (data[offset] === ')') {
-            if (!checkBounds(1))
-                return {i: offset};
-            
-            //ctx.codeSet = data[offset + 1];
-            return {i: offset + 2};
-        }
-        if (data[offset] === '=') {
-            display.toggleMode('DECPAM');
-            return {i: offset + 1};
-        }
-        if (data[offset] === '>') {
-            display.toggleMode('DECPNM');
-            return {i: offset + 1};
-        }
-        if (data[offset] === '[') {
-            // CSI
-            if (!checkBounds(1))
-                return {i: offset};
-
-            let hasQuestionmark = data[offset + 1] === '?';
-
-            let numberList = [];
-            let num = 0;
-            let accumNum = 0;
-
-            let pushNum = () => {
-                if (accumNum === 0)
-                    numberList.push(undefined);
-
-                var y = 0;
-                for(; num; num = Math.floor(num / 10)) {
-                    y *= 10;
-                    y += num % 10;
-                }
-                num = y;
-
-                numberList.push(num);
-                accumNum = 0;
-                num = 0;
-            }
-
-            for (let i = offset + 1 + (hasQuestionmark ? 1 : 0); i !== data.length; ++i) {
-                let code = data.charCodeAt(i);
-                if (code >= '0'.charCodeAt(0) && code <= '9'.charCodeAt(0)) {
-                    num += (code - '0'.charCodeAt(0)) * Math.pow(10, accumNum);
-                    ++accumNum;                    
-                }
-                else if (code === ';'.charCodeAt(0)) {
-                    pushNum();
-                } else {
-                    pushNum();
-                    return {
-                        i: i + 1,
-                        csi: {
-                            numberList: numberList,
-                            hasQuestionmark: hasQuestionmark,
-                            mode: data[i]
-                        }
-                    }
-                }
-            }
-        }
-
-        return {i: offset}
-    }
-
-    parse = (data, displayDimensions) => {
-        let display = new Display(displayDimensions);
-
-        for (let i = 0; i !== data.length; ++i) {
-            let code  = data.charCodeAt(i);
-            if (code === 0x1B) {
-                // other control sequences
-                let res = this.analyzeEscapeSequence(display, data, i+1, display.cursor);
-
-                if (res.csi) {
-                    applyCsi(res.csi);
-                }
-
-                // there was an understood sequence, can continue parse
-                if (res.i !== i) {
-                    i = res.i - 1;
-                    continue;
-                }
-            } else if (code < 32 && code != '\n'.charCodeAt(0)) {
-                // control characters with special purpose
-            } else {
-                display.putChar(data[i]);
-            }
-        }
-        return display;
     }
 
     constructor(props) {
         super(props);
         this.onInput = this.props.onInput ? this.props.onInput : ()=>{};
-        if (this.props.defaultBackground)
+
+        if (this.props.defaultBackground !== undefined)
             this.defaultBackground = this.props.defaultBackground;
         else
-            this.defaultBackground = 'var(--terminal-default-background)';
-        if (this.props.defaultForeground)
+            //this.defaultBackground = 'var(--terminal-default-background)';
+            this.defaultBackground = '#303030';
+
+        if (this.props.defaultForeground !== undefined)
             this.defaultForeground = this.props.defaultForeground;
         else
-            this.defaultForeground = 'var(--terminal-default-foreground)';
+            //this.defaultForeground = 'var(--terminal-default-foreground)';
+            this.defaultForeground = '#DDDDDD';
+
+        if (this.props.warningReporter)
+            this.warningReporter = this.props.warningReporter;
+        else
+            this.warningReporter = (w) => {console.log('TERMINAL_WARNING: ' + w)};
+
+        if (this.props.errorReporter)
+            this.errorReporter = this.props.errorReporter;
+        else
+            this.errorReporter = (e) => {console.error('TERMINAL_ERROR: ' + e)};
+        
     }
 
-    renderDisplay(data, displayDimensions) {
-        this.display = this.parse(data, displayDimensions);
+    renderDisplay(initialData, displayDimensions) {
+        this.initialize(initialData, displayDimensions);
         let keyDown = this.props.onKeyDown;
         if (keyDown === undefined || keyDown === null)
             keyDown = ()=>{}
@@ -377,6 +303,8 @@ class Terminal extends React.Component {
                         displayDimensions={this.bounds}
                         onScroll={this.onScroll}
                         cursorVisible={this.props.inputOnCursor}
+                        defaultBackground={this.props.defaultBackground}
+                        defaultForeground={this.props.defaultForeground}
                         onKeyDown={(e) => {
                             if (!this.props.inputOnCursor)
                                 return;
@@ -404,6 +332,8 @@ class Terminal extends React.Component {
                             className='terminalInput'
                             disabled={this.props.disabled ? this.props.disabled : false}
                             style={this.style()}
+                            defaultBackground={this.props.defaultBackground}
+                            defaultForeground={this.props.defaultForeground}
                             onKeyDown={(e) => {
                                 this.keyDownBasics(e);
                                 this.onKeyDown(e);
@@ -427,3 +357,5 @@ class Terminal extends React.Component {
 }
 
 export default Terminal;
+
+export {TerminalData, Terminal};

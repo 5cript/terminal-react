@@ -1,6 +1,6 @@
 import React from 'react';
 
-let helpers = {
+let Helpers = {
     _16color1: ["#000000", "#CD0000", "#00CD00", "#CDCD00", "#0000CD", "#CD00CD", "#00CDCD", "#E5E5E5"],
     _16color2: ["#0C0C0C", "#FF0000", "#00FF00", "#FFFF00", "#0000FF", "#FF00FF", "#00FFFF", "#FFFFFF"],
     isForeground: (num) => {
@@ -45,10 +45,10 @@ let helpers = {
             return def;
 
         if (num >= 30 && num <= 37)
-            return helpers._16color1[num - 30]
+            return Helpers._16color1[num - 30]
 
         if (num >= 90 && num <= 97)
-            return helpers._16color2[num - 90]
+            return Helpers._16color2[num - 90]
 
         return def;
     },
@@ -57,10 +57,10 @@ let helpers = {
             return def;
 
         if (num >= 40 && num <= 47)
-            return helpers._16color1[num - 40]
+            return Helpers._16color1[num - 40]
 
         if (num >= 100 && num <= 107)
-            return helpers._16color2[num - 100]
+            return Helpers._16color2[num - 100]
 
         return def;
     },
@@ -71,13 +71,13 @@ let helpers = {
         let fg = (def) => {
             let colStr = '';
             if (mod.foreground256 !== -1)
-                colStr = helpers.to256Color(mod.foreground256, def);
+                colStr = Helpers.to256Color(mod.foreground256, def);
             else
-                colStr = helpers.foregroundTo16Color(mod.foreground, def);
+                colStr = Helpers.foregroundTo16Color(mod.foreground, def);
             if (!mod.bold && !mod.dim)
                 return colStr
 
-            let hsl = helpers.rgbToHsl(
+            let hsl = Helpers.rgbToHsl(
                 parseInt(colStr.substr(1, 2), 16),
                 parseInt(colStr.substr(3, 2), 16),
                 parseInt(colStr.substr(5, 2), 16)
@@ -85,22 +85,22 @@ let helpers = {
             if (mod.bold) {
                 hsl[1] = 0.8 * hsl[1];
                 hsl[2] = Math.min(1.2 * hsl[2], 1);
-                let rgb = helpers.hslToRgb(hsl[0], hsl[1], hsl[2]);
+                let rgb = Helpers.hslToRgb(hsl[0], hsl[1], hsl[2]);
                 return "#" + rgb[0].toString(16).padStart(2, '0') + rgb[1].toString(16).padStart(2, '0') + rgb[2].toString(16).padStart(2, '0')       
             }
             if (mod.dim) {
                 //hsl[1] = 0.8 * hsl[1];
                 hsl[2] = 0.7 * hsl[2];
-                let rgb = helpers.hslToRgb(hsl[0], hsl[1], hsl[2]);
+                let rgb = Helpers.hslToRgb(hsl[0], hsl[1], hsl[2]);
                 return "#" + rgb[0].toString(16).padStart(2, '0') + rgb[1].toString(16).padStart(2, '0') + rgb[2].toString(16).padStart(2, '0')   
             }
         }
 
         let bg = (def) => {
             if (mod.background256 !== -1)
-                return helpers.to256Color(mod.background256, def);
+                return Helpers.to256Color(mod.background256, def);
             else
-                return helpers.backgroundTo16Color(mod.background, def);
+                return Helpers.backgroundTo16Color(mod.background, def);
         }
 
         if (mod === undefined || data === undefined)
@@ -206,4 +206,4 @@ let helpers = {
     }
 }
 
-export default helpers;
+export default Helpers;
