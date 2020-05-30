@@ -123,13 +123,17 @@ class Terminal extends React.Component {
             this.showLineNumbers = true;
         else
             this.showLineNumbers = false;
+        if (!this.props.size)
+            this.size={width: 80, height: 24};
+        else
+            this.size = this.props.size;
 
         if (this.props.bounds)
             this.bounds = this.props.bounds;
         else {
             this.bounds = {
-                height: props.size.height ? (props.size.height / this.font.size) : (120), 
-                width: props.size.width / (this.font.size * 2 / 3)
+                height: this.size.height ? (this.size.height / this.font.size) : (120), 
+                width: this.size.width / (this.font.size * 2 / 3)
             };
         }
 
@@ -332,8 +336,6 @@ class Terminal extends React.Component {
                             className='terminalInput'
                             disabled={this.props.disabled ? this.props.disabled : false}
                             style={this.style()}
-                            defaultBackground={this.props.defaultBackground}
-                            defaultForeground={this.props.defaultForeground}
                             onKeyDown={(e) => {
                                 this.keyDownBasics(e);
                                 this.onKeyDown(e);
